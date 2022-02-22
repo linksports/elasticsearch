@@ -383,4 +383,58 @@ func TestSearch(t *testing.T) {
 			assert.Equal(t, d.I, list[i].I)
 		}
 	})
+
+	t.Run("Aggregations", func(t *testing.T) {
+		targetSize := 3
+		data := make([]DocBody, targetSize)
+		keyword := faker.Word()
+		for i, _ := range data {
+			var d DocBody
+			faker.FakeData(&d)
+			d.Id = faker.UUIDDigit()
+			d.I = i + rand.Intn(9999) + 999
+			d.S = keyword
+
+			es.CreateDocument(&Document{
+				Index: indexName,
+				ID:    d.Id,
+				Body:  d,
+			})
+			data[i] = d
+		}
+		es.Refresh()
+
+		var list []DocBody
+		aggsKeys := []string{"group_by_keyword", "group_by_keyword2"}
+		status, hits, total, aggs, err := es.SearchWithAggsBuckets(indexName, fmt.Sprintf(`{
+			"size": %d,
+			"query": {
+				"terms": {
+					"id": [
+						"%s","%s","%s"
+					]
+				}
+			},
+			"aggs": {
+			  "%s": {
+					"terms": {
+					  "field": "i"
+					}
+				  },
+			  "%s": {
+				"terms": {
+				  "field": "s.keyword"
+				}
+			  }
+			}
+		  }`, targetSize, data[0].Id, data[1].Id, data[2].Id, aggsKeys[0], aggsKeys[1]), &list, aggsKeys)
+
+		assert.NoError(t, err)
+		for _, aggsKey := range aggsKeys {
+			assert.NotEmpty(t, aggs[aggsKey])
+		}
+		assert.Equal(t, len(data), total)
+		assert.Equal(t, StatusSuccess, status)
+		assert.Len(t, hits, targetSize)
+	})
 }
