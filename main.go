@@ -253,12 +253,11 @@ func (es *_elasticsearch) Search(index string, query string, data interface{}) (
 		es.client.Search.WithTrackTotalHits(true),
 		es.client.Search.WithPretty(),
 	)
-	defer res.Body.Close()
-
 	if err != nil {
 		log.Printf("Error getting response: %s", err)
 		return StatusRequestError, []*HitData{}, 0, err
 	}
+	defer res.Body.Close()
 
 	if res.IsError() {
 		var esErr error
