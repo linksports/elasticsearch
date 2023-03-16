@@ -322,6 +322,14 @@ func TestSearch(t *testing.T) {
 	})
 	es.Refresh(indexName)
 
+	t.Run("exists err", func(t *testing.T) {
+		status, hits, total, err := es.Search(indexName, `{`, &data)
+		assert.NoError(t, err)
+		assert.Equal(t, StatusBadRequestError, status)
+		assert.Equal(t, total, 0)
+		assert.Empty(t, hits)
+	})
+
 	t.Run("Found", func(t *testing.T) {
 		var list []DocBody
 		status, hits, total, err := es.Search(indexName, fmt.Sprintf(`{
