@@ -198,7 +198,7 @@ func (es *_elasticsearch) UpdateDocument(doc *Document) (StatusCode, error) {
 		case 400:
 			return StatusBadRequestError, errors.New("bad request")
 		}
-		return StatusError, err
+		return StatusError, errors.New(res.String())
 	} else {
 		// Deserialize the response into a map.
 		var r map[string]interface{}
@@ -209,7 +209,7 @@ func (es *_elasticsearch) UpdateDocument(doc *Document) (StatusCode, error) {
 			log.Printf("[%s] %s; version=%d ; id=%s", res.Status(), r["result"], int(r["_version"].(float64)), r["_id"])
 		}
 	}
-	return StatusSuccess, err
+	return StatusSuccess, nil
 }
 
 func (es *_elasticsearch) RemoveDocument(doc *Document) (StatusCode, error) {
@@ -231,7 +231,7 @@ func (es *_elasticsearch) RemoveDocument(doc *Document) (StatusCode, error) {
 		case 404:
 			return StatusNotFoundError, errors.New("not found")
 		}
-		return StatusError, err
+		return StatusError, errors.New(res.String())
 	} else {
 		// Deserialize the response into a map.
 		var r map[string]interface{}
@@ -241,7 +241,7 @@ func (es *_elasticsearch) RemoveDocument(doc *Document) (StatusCode, error) {
 		}
 	}
 
-	return StatusSuccess, err
+	return StatusSuccess, nil
 }
 
 func (es *_elasticsearch) Search(index string, query string, data interface{}) (StatusCode, []*HitData, int, error) {
@@ -261,23 +261,25 @@ func (es *_elasticsearch) Search(index string, query string, data interface{}) (
 	}
 
 	if res.IsError() {
+		var esErr error
 		var e map[string]interface{}
 		if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
-			log.Printf("Error parsing the response body: %s", err)
+			esErr = fmt.Errorf("Error parsing the response body: %s", err)
 		} else {
 			//Print the response status and error information.
-			log.Printf("[%s] %s: %s",
+			esErr = fmt.Errorf("[%s] %s: %s",
 				res.Status(),
 				e["error"].(map[string]interface{})["type"],
 				e["error"].(map[string]interface{})["reason"],
 			)
 		}
+		log.Println(esErr)
 
 		switch res.StatusCode {
 		case 400:
-			return StatusBadRequestError, []*HitData{}, 0, err
+			return StatusBadRequestError, []*HitData{}, 0, esErr
 		}
-		return StatusError, []*HitData{}, 0, err
+		return StatusError, []*HitData{}, 0, esErr
 	}
 
 	var result map[string]interface{}
@@ -333,11 +335,14 @@ func (es *_elasticsearch) DeleteIndeces(index ...string) (StatusCode, error) {
 		Index: index,
 	}
 	res, err := req.Do(context.Background(), es.client)
+	if err != nil {
+		return StatusError, err
+	}
 	if res.IsError() {
-		return StatusUnexpectedError, err
+		return StatusUnexpectedError, errors.New(res.String())
 	}
 
-	return StatusSuccess, err
+	return StatusSuccess, nil
 }
 
 type _elasticsearch struct {
