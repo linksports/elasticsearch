@@ -468,3 +468,244 @@ func TestSearch(t *testing.T) {
 		}
 	})
 }
+
+func TestDeleteByQuery(t *testing.T) {
+	es := newElasticsearch()
+
+	t.Run("Success", func(t *testing.T) {
+		t.Run("queryの条件に当てはまるものだけが削除されていること", func(t *testing.T) {
+			indices := []string{faker.UUIDDigit(), faker.UUIDDigit(), faker.UUIDDigit()}
+
+			targetContent := faker.UUIDDigit()
+			documentsNum := rand.Intn(5) + 3
+
+			for _, indexName := range indices {
+				documents := make([]DocBody, documentsNum)
+				for i := 0; i < documentsNum; i++ {
+					var data DocBody
+					faker.FakeData(&data)
+					data.Id = faker.UUIDDigit()
+					documents[i] = data
+				}
+				documents[0].S = targetContent
+				documents[2].S = targetContent
+				for _, document := range documents {
+					es.CreateDocument(&Document{
+						Index: indexName,
+						ID:    document.Id,
+						Body:  document,
+					})
+				}
+			}
+
+			query := fmt.Sprintf(`{
+				"query": {
+					"term": {
+						"s": "%s"
+					}
+				}
+			}`, targetContent)
+
+			matchAll := `{
+				"query": {
+					"match_all": {}
+				}
+			}`
+
+			es.Refresh(indices...)
+			for _, indexName := range indices {
+				status, count, err := es.Count(indexName, query)
+
+				assert.NoError(t, err)
+				assert.Equal(t, StatusSuccess, status)
+				assert.Equal(t, 2, count)
+
+				status, count, err = es.Count(indexName, matchAll)
+
+				assert.NoError(t, err)
+				assert.Equal(t, StatusSuccess, status)
+				assert.Equal(t, documentsNum, count)
+			}
+
+			status, err := es.DeleteByQuery(indices, query)
+			assert.NoError(t, err)
+			assert.Equal(t, StatusSuccess, status)
+
+			es.Refresh(indices...)
+			for _, indexName := range indices {
+				status, count, err := es.Count(indexName, query)
+
+				assert.NoError(t, err)
+				assert.Equal(t, StatusSuccess, status)
+				assert.Equal(t, 0, count)
+
+				status, count, err = es.Count(indexName, matchAll)
+
+				assert.NoError(t, err)
+				assert.Equal(t, StatusSuccess, status)
+				assert.Equal(t, documentsNum-2, count)
+			}
+			es.DeleteIndeces(indices...)
+		})
+
+		t.Run("大量データ(1万件以上)の一括削除が可能なこと", func(t *testing.T) {
+			indices := []string{faker.UUIDDigit(), faker.UUIDDigit(), faker.UUIDDigit()}
+
+			targetContent := faker.UUIDDigit()
+			documentsNum := 10001
+
+			for _, indexName := range indices {
+				for i := 0; i < documentsNum; i++ {
+					var data DocBody
+					faker.FakeData(&data)
+					data.Id = faker.UUIDDigit()
+					data.S = targetContent
+					es.CreateDocument(&Document{
+						Index: indexName,
+						ID:    data.Id,
+						Body:  data,
+					})
+				}
+			}
+
+			query := fmt.Sprintf(`{
+				"query": {
+					"term": {
+						"s": "%s"
+					}
+				}
+			}`, targetContent)
+
+			es.Refresh(indices...)
+			for _, indexName := range indices {
+				status, count, err := es.Count(indexName, query)
+
+				assert.NoError(t, err)
+				assert.Equal(t, StatusSuccess, status)
+				assert.Equal(t, documentsNum, count)
+			}
+
+			status, err := es.DeleteByQuery(indices, query)
+			assert.NoError(t, err)
+			assert.Equal(t, StatusSuccess, status)
+
+			es.Refresh(indices...)
+			for _, indexName := range indices {
+				status, count, err := es.Count(indexName, query)
+
+				assert.NoError(t, err)
+				assert.Equal(t, StatusSuccess, status)
+				assert.Equal(t, 0, count)
+			}
+			es.DeleteIndeces(indices...)
+		})
+
+		t.Run("削除が件数が0件の場合にエラーがないこと", func(t *testing.T) {
+			indices := []string{faker.UUIDDigit(), faker.UUIDDigit(), faker.UUIDDigit()}
+
+			targetContent := faker.UUIDDigit()
+			documentsNum := rand.Intn(5) + 3
+
+			for _, indexName := range indices {
+				for i := 0; i < documentsNum; i++ {
+					var data DocBody
+					faker.FakeData(&data)
+					data.Id = faker.UUIDDigit()
+					es.CreateDocument(&Document{
+						Index: indexName,
+						ID:    data.Id,
+						Body:  data,
+					})
+				}
+			}
+
+			query := fmt.Sprintf(`{
+				"query": {
+					"term": {
+						"s": "%s"
+					}
+				}
+			}`, targetContent)
+
+			es.Refresh(indices...)
+			for _, indexName := range indices {
+				status, count, err := es.Count(indexName, query)
+
+				assert.NoError(t, err)
+				assert.Equal(t, StatusSuccess, status)
+				assert.Equal(t, 0, count)
+			}
+
+			status, err := es.DeleteByQuery(indices, query)
+			assert.NoError(t, err)
+			assert.Equal(t, StatusSuccess, status)
+			es.DeleteIndeces(indices...)
+		})
+	})
+
+	t.Run("Failure", func(t *testing.T) {
+		t.Run("queryが正しくない場合", func(t *testing.T) {
+			indexName := faker.UUIDDigit()
+
+			targetContent := faker.UUIDDigit()
+			documentsNum := rand.Intn(5) + 3
+
+			for i := 0; i < documentsNum; i++ {
+				var data DocBody
+				faker.FakeData(&data)
+				data.Id = faker.UUIDDigit()
+				es.CreateDocument(&Document{
+					Index: indexName,
+					ID:    data.Id,
+					Body:  data,
+				})
+			}
+
+			query := fmt.Sprintf(`{
+				"error test": {
+					"term": {
+						"s": "%s"
+					}
+				}
+			}`, targetContent)
+
+			es.Refresh(indexName)
+			status, err := es.DeleteByQuery([]string{indexName}, query)
+			assert.Error(t, err)
+			assert.Equal(t, StatusBadRequestError, status)
+		})
+
+		t.Run("indexNameが正しくない場合", func(t *testing.T) {
+			indexName := faker.UUIDDigit()
+
+			targetContent := faker.UUIDDigit()
+			documentsNum := rand.Intn(5) + 3
+
+			for i := 0; i < documentsNum; i++ {
+				var data DocBody
+				faker.FakeData(&data)
+				data.Id = faker.UUIDDigit()
+				es.CreateDocument(&Document{
+					Index: indexName,
+					ID:    data.Id,
+					Body:  data,
+				})
+			}
+
+			query := fmt.Sprintf(`{
+				"error test": {
+					"term": {
+						"s": "%s"
+					}
+				}
+			}`, targetContent)
+
+			dummyIndexName := faker.UUIDDigit()
+			es.Refresh(indexName)
+			status, err := es.DeleteByQuery([]string{dummyIndexName}, query)
+			assert.Error(t, err)
+			assert.Equal(t, StatusBadRequestError, status)
+		})
+	})
+
+}
