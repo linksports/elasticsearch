@@ -76,6 +76,8 @@ type Elasticsearch interface {
 	GetSource(index string, id string, result any) (int, error)
 	Count(index string, query string) (StatusCode, int, error)
 
+	DeleteByQuery(indices []string, query string) (StatusCode, error)
+
 	DeleteIndeces(index ...string) (StatusCode, error)
 }
 
@@ -326,6 +328,26 @@ func (es *_elasticsearch) Search(index string, query string, data interface{}) (
 	}
 
 	return StatusSuccess, hitsData, total, nil
+}
+
+func (es *_elasticsearch) DeleteByQuery(indices []string, query string) (StatusCode, error) {
+	res, err := es.client.DeleteByQuery(indices, strings.NewReader(query))
+
+	if err != nil {
+		log.Printf("Error getting response: %s indices=%v query=%s", err, indices, query)
+		return StatusRequestError, err
+	}
+	if res.IsError() {
+		log.Printf("[%s] Error indices=%v query=%s", res.Status(), indices, query)
+		switch res.StatusCode {
+		case 400:
+			return StatusBadRequestError, errors.New("bad request")
+		}
+		return StatusError, errors.New(res.String())
+	}
+
+	return StatusSuccess, nil
+
 }
 
 func (es *_elasticsearch) DeleteIndeces(index ...string) (StatusCode, error) {
