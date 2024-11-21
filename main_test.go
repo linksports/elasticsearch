@@ -324,7 +324,7 @@ func TestSearch(t *testing.T) {
 
 	t.Run("exists err", func(t *testing.T) {
 		status, hits, total, err := es.Search(indexName, `{`, &data)
-		assert.NoError(t, err)
+		assert.Error(t, err)
 		assert.Equal(t, StatusBadRequestError, status)
 		assert.Equal(t, total, 0)
 		assert.Empty(t, hits)
@@ -467,6 +467,160 @@ func TestSearch(t *testing.T) {
 			assert.Equal(t, d.I, list[i].I)
 		}
 	})
+}
+
+func TestSearchWithAggregations(t *testing.T) {
+	es := newElasticsearch()
+
+	targetSize := 3
+	aggsKeys := []string{"aggsKey1", "aggsKey2"}
+
+	data := make([]DocBody, targetSize)
+	for i := range data {
+		var d DocBody
+		faker.FakeData(&d)
+		d.Id = faker.UUIDDigit()
+
+		es.CreateDocument(&Document{
+			Index: indexName,
+			ID:    d.Id,
+			Body:  d,
+		})
+		data[i] = d
+	}
+	es.Refresh(indexName)
+
+	t.Run("Success", func(t *testing.T) {
+
+		t.Run("検索、集計ができること", func(t *testing.T) {
+			var list []DocBody
+			status, hits, total, aggs, err := es.SearchWithAggregations(indexName, fmt.Sprintf(`{
+				"size": %d,
+				"query": {
+					"terms": {
+						"id": [
+							"%s","%s","%s"
+						]
+					}
+				},
+				"aggs": {
+					"%s": {
+						"terms": {
+						  "field": "i"
+						}
+					},
+					"%s": {
+						"terms": {
+						  "field": "s.keyword"
+						}
+					}
+				}
+			}`, targetSize, data[0].Id, data[1].Id, data[2].Id, aggsKeys[0], aggsKeys[1]), &list, aggsKeys)
+
+			assert.NoError(t, err)
+
+			assert.Equal(t, StatusSuccess, status)
+			assert.Equal(t, len(data), total)
+			assert.Equal(t, indexName, hits[0].Index)
+
+			for i, d := range data {
+				assert.Equal(t, data[i].Id, hits[i].Id)
+				assert.Equal(t, data[i].Id, hits[i].Id)
+
+				assert.Equal(t, d.Id, list[i].Id)
+				assert.Equal(t, d.S, list[i].S)
+				assert.Equal(t, d.B, list[i].B)
+				assert.Equal(t, d.I, list[i].I)
+			}
+
+			for i, k := range aggsKeys {
+				assert.NotEmpty(t, aggs[k][i].Key)
+				assert.NotEmpty(t, aggs[k][i].DocCount)
+			}
+		})
+
+		t.Run("aggsKeysの文字列が集約名に一致しないとき、集計結果は空のmapを返すこと", func(t *testing.T) {
+			var list []DocBody
+			notAggsKeys := []string{"notAggsKey1", "notAggsKey2"}
+			status, hits, total, aggs, err := es.SearchWithAggregations(indexName, fmt.Sprintf(`{
+				"size": %d,
+				"query": {
+					"terms": {
+						"id": [
+							"%s","%s","%s"
+						]
+					}
+				},
+				"aggs": {
+					"%s": {
+						"terms": {
+						  "field": "i"
+						}
+					},
+					"%s": {
+						"terms": {
+						  "field": "s.keyword"
+						}
+					}
+				}
+			}`, targetSize, data[0].Id, data[1].Id, data[2].Id, aggsKeys[0], aggsKeys[1]), &list, notAggsKeys)
+
+			assert.NoError(t, err)
+			assert.Equal(t, StatusSuccess, status)
+			assert.Equal(t, len(data), total)
+			assert.NotEmpty(t, hits)
+			assert.NotEmpty(t, list)
+			assert.Empty(t, aggs)
+		})
+
+		t.Run("検索結果が0件のとき、集計結果はaggsKeysのごとに空のsliceを返すこと", func(t *testing.T) {
+			var list []DocBody
+			status, hits, total, aggs, err := es.SearchWithAggregations(indexName, fmt.Sprintf(`{
+				"size": %d,
+				"query": {
+					"term": {
+						"id": "%s"
+					}
+				},
+				"aggs": {
+					"%s": {
+						"terms": {
+						  "field": "i"
+						}
+					},
+					"%s": {
+						"terms": {
+						  "field": "s.keyword"
+						}
+					}
+				}
+			}`, targetSize, "not-exists", aggsKeys[0], aggsKeys[1]), &list, aggsKeys)
+
+			assert.NoError(t, err)
+			assert.Equal(t, StatusSuccess, status)
+			assert.Equal(t, 0, total)
+			assert.Empty(t, hits)
+			assert.Empty(t, list)
+
+			for _, k := range aggsKeys {
+				assert.Empty(t, aggs[k])
+			}
+		})
+	})
+
+	t.Run("Fail", func(t *testing.T) {
+		t.Run("検索queryが不正のとき、エラーになること", func(t *testing.T) {
+			var data DocBody
+			status, hits, total, aggs, err := es.SearchWithAggregations(indexName, `{`, &data, aggsKeys)
+			assert.Error(t, err)
+			assert.Equal(t, StatusBadRequestError, status)
+			assert.Empty(t, hits)
+			assert.Equal(t, total, 0)
+			assert.Empty(t, aggs)
+		})
+	})
+
+	es.DeleteIndeces(indexName)
 }
 
 func TestDeleteByQuery(t *testing.T) {

@@ -63,6 +63,11 @@ type HitData struct {
 	Sort  []interface{} `json:"sort"`
 }
 
+type AggregationBucket struct {
+	Key      interface{} `json:"key"`
+	DocCount float64     `json:"doc_count"`
+}
+
 type Elasticsearch interface {
 	Refresh(index ...string) error
 	Ping() error
@@ -73,6 +78,7 @@ type Elasticsearch interface {
 	RemoveDocument(doc *Document) (StatusCode, error)
 
 	Search(index string, query string, data interface{}) (StatusCode, []*HitData, int, error)
+	SearchWithAggregations(index string, query string, data interface{}, aggsKeys []string) (StatusCode, []*HitData, int, map[string][]*AggregationBucket, error)
 	GetSource(index string, id string, result any) (int, error)
 	Count(index string, query string) (StatusCode, int, error)
 
@@ -247,87 +253,56 @@ func (es *_elasticsearch) RemoveDocument(doc *Document) (StatusCode, error) {
 }
 
 func (es *_elasticsearch) Search(index string, query string, data interface{}) (StatusCode, []*HitData, int, error) {
-	// Perform the search request.
-	res, err := es.client.Search(
-		es.client.Search.WithContext(context.Background()),
-		es.client.Search.WithIndex(index),
-		es.client.Search.WithBody(strings.NewReader(query)),
-		es.client.Search.WithTrackTotalHits(true),
-		es.client.Search.WithPretty(),
-	)
+	statusCode, result, err := search(es.client, index, query)
 	if err != nil {
-		log.Printf("Error getting response: %s", err)
-		return StatusRequestError, []*HitData{}, 0, err
-	}
-	defer res.Body.Close()
-
-	if res.IsError() {
-		var esErr error
-		var e map[string]interface{}
-		if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
-			esErr = fmt.Errorf("Error parsing the response body: %s", err)
-		} else {
-			//Print the response status and error information.
-			esErr = fmt.Errorf("[%s] %s: %s",
-				res.Status(),
-				e["error"].(map[string]interface{})["type"],
-				e["error"].(map[string]interface{})["reason"],
-			)
-		}
-		log.Println(esErr)
-
-		switch res.StatusCode {
-		case 400:
-			return StatusBadRequestError, []*HitData{}, 0, esErr
-		}
-		return StatusError, []*HitData{}, 0, esErr
+		return statusCode, []*HitData{}, 0, err
 	}
 
-	var result map[string]interface{}
-	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
-		return StatusParseError, []*HitData{}, 0, err
-	}
-
-	if _, ok := result["hits"]; !ok {
-		return StatusNoContent, []*HitData{}, 0, nil
-	}
-
-	total := 0
-	if t, existsTotal := result["hits"].(map[string]interface{})["total"]; existsTotal {
-		total = int(t.(map[string]interface{})["value"].(float64))
-	}
-
-	hits := result["hits"].(map[string]interface{})["hits"].([]interface{})
-
-	documents := make([]interface{}, len(hits))
-	hitsData := make([]*HitData, len(hits))
-
-	for i, hit := range hits {
-		documents[i] = hit.(map[string]interface{})["_source"]
-
-		h := &HitData{
-			Index: hit.(map[string]interface{})["_index"].(string),
-			Type:  hit.(map[string]interface{})["_type"].(string),
-			Id:    hit.(map[string]interface{})["_id"].(string),
-		}
-
-		if score, _ := hit.(map[string]interface{})["_score"]; score != nil {
-			h.Score = score.(float64)
-		}
-
-		if sort, _ := hit.(map[string]interface{})["sort"]; sort != nil {
-			h.Sort = sort.([]interface{})
-		}
-
-		hitsData[i] = h
-	}
-
-	tmp, err := json.Marshal(documents)
-	if err := json.Unmarshal(tmp, data); err != nil {
-		return StatusParseError, []*HitData{}, 0, err
+	statusCode, hitsData, total, err := parseHitsData(result, data)
+	if err != nil {
+		return statusCode, []*HitData{}, 0, err
 	}
 
 	return StatusSuccess, hitsData, total, nil
+}
+
+func (es *_elasticsearch) SearchWithAggregations(index string, query string, data interface{}, aggsKeys []string) (StatusCode, []*HitData, int, map[string][]*AggregationBucket, error) {
+	aggs := map[string][]*AggregationBucket{}
+	statusCode, result, err := search(es.client, index, query)
+	if err != nil {
+		return statusCode, []*HitData{}, 0, aggs, err
+	}
+
+	statusCode, hitsData, total, err := parseHitsData(result, data)
+	if err != nil {
+		return statusCode, []*HitData{}, 0, aggs, err
+	}
+
+	if _, ok := result["aggregations"]; !ok {
+		return StatusNoContent, []*HitData{}, 0, aggs, nil
+	}
+
+	if len(aggsKeys) > 0 {
+		for _, key := range aggsKeys {
+			if _, ok := result["aggregations"].(map[string]interface{})[key]; !ok {
+				continue
+			}
+
+			buckets := result["aggregations"].(map[string]interface{})[key].(map[string]interface{})["buckets"].([]interface{})
+			var aggregationBucket []*AggregationBucket
+			for _, bucket := range buckets {
+				b := &AggregationBucket{
+					Key:      bucket.(map[string]interface{})["key"],
+					DocCount: bucket.(map[string]interface{})["doc_count"].(float64),
+				}
+				aggregationBucket = append(aggregationBucket, b)
+			}
+
+			aggs[key] = aggregationBucket
+		}
+	}
+
+	return StatusSuccess, hitsData, total, aggs, nil
 }
 
 func (es *_elasticsearch) DeleteByQuery(indices []string, query string) (StatusCode, error) {
@@ -392,4 +367,91 @@ func refresh2string(r *bool) string {
 		return map[bool]string{true: "true", false: "false"}[*r]
 	}
 	return "false"
+}
+
+func search(client *goElasticsearch.Client, index string, query string) (StatusCode, map[string]interface{}, error) {
+	var result map[string]interface{}
+	res, err := client.Search(
+		client.Search.WithContext(context.Background()),
+		client.Search.WithIndex(index),
+		client.Search.WithBody(strings.NewReader(query)),
+		client.Search.WithTrackTotalHits(true),
+		client.Search.WithPretty(),
+	)
+	if err != nil {
+		log.Printf("Error getting response: %s", err)
+		return StatusRequestError, result, err
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		var esErr error
+		var e map[string]interface{}
+		if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
+			esErr = fmt.Errorf("error parsing the response body: %s", err)
+		} else {
+			//Print the response status and error information.
+			esErr = fmt.Errorf("[%s] %s: %s",
+				res.Status(),
+				e["error"].(map[string]interface{})["type"],
+				e["error"].(map[string]interface{})["reason"],
+			)
+		}
+		log.Println(esErr)
+
+		switch res.StatusCode {
+		case 400:
+			return StatusBadRequestError, result, esErr
+		}
+		return StatusError, result, esErr
+	}
+
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		return StatusParseError, result, err
+	}
+
+	return StatusSuccess, result, nil
+}
+
+func parseHitsData(result map[string]interface{}, data interface{}) (StatusCode, []*HitData, int, error) {
+	if _, ok := result["hits"]; !ok {
+		return StatusNoContent, []*HitData{}, 0, nil
+	}
+
+	total := 0
+	if t, existsTotal := result["hits"].(map[string]interface{})["total"]; existsTotal {
+		total = int(t.(map[string]interface{})["value"].(float64))
+	}
+
+	hits := result["hits"].(map[string]interface{})["hits"].([]interface{})
+
+	documents := make([]interface{}, len(hits))
+	hitsData := make([]*HitData, len(hits))
+
+	for i, hit := range hits {
+		documents[i] = hit.(map[string]interface{})["_source"]
+
+		h := &HitData{
+			Index: hit.(map[string]interface{})["_index"].(string),
+			Type:  hit.(map[string]interface{})["_type"].(string),
+			Id:    hit.(map[string]interface{})["_id"].(string),
+		}
+
+		if score := hit.(map[string]interface{})["_score"]; score != nil {
+			h.Score = score.(float64)
+		}
+
+		if sort := hit.(map[string]interface{})["sort"]; sort != nil {
+			h.Sort = sort.([]interface{})
+		}
+
+		hitsData[i] = h
+	}
+
+	tmp, _ := json.Marshal(documents)
+	if err := json.Unmarshal(tmp, data); err != nil {
+		return StatusParseError, []*HitData{}, 0, err
+	}
+
+	return StatusSuccess, hitsData, total, nil
 }
