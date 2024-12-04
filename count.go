@@ -17,11 +17,13 @@ func (es *_elasticsearch) Count(index string, query string) (StatusCode, int, er
 		return StatusRequestError, 0, err
 	}
 	if res.IsError() {
-		log.Fatalf("[%s] Error indexing document", res.Status())
+		log.Printf("[%s] Error indexing document", res.Status())
 
 		switch res.StatusCode {
 		case 400:
 			return StatusBadRequestError, 0, err
+		case 404:
+			return StatusNotFoundError, 0, err
 		}
 		return StatusError, 0, err
 	}
