@@ -2,6 +2,8 @@ package elasticsearch
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 )
@@ -17,7 +19,7 @@ func (es *_elasticsearch) Count(index string, query string) (StatusCode, int, er
 		return StatusRequestError, 0, err
 	}
 	if res.IsError() {
-		log.Printf("[%s] Error indexing document", res.Status())
+		err := errors.New(fmt.Sprintf("[%s] Error indexing document", res.Status()))
 
 		switch res.StatusCode {
 		case 400:
