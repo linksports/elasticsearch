@@ -9,6 +9,7 @@ import (
 	"github.com/bxcodec/faker/v3"
 	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const indexName = "test-es-index"
@@ -207,6 +208,209 @@ func TestCreateDocument(t *testing.T) {
 				ID:    body.Id,
 				Body:  nil,
 			})
+			assert.Error(t, err)
+			assert.Equal(t, StatusInternalError, status)
+		})
+	})
+}
+
+func TestCreateDocuments(t *testing.T) {
+	es := newElasticsearch()
+
+	t.Run("Success", func(t *testing.T) {
+		t.Run("No refresh option", func(t *testing.T) {
+			indexName := faker.UUIDDigit()
+			defer es.DeleteIndeces(indexName)
+
+			var docs []*Document
+			var expectedList []DocBody
+			docsLen := rand.Intn(5) + 5
+			for range docsLen {
+				var doc DocBody
+				faker.FakeData(&doc)
+				doc.Id = faker.UUIDDigit()
+				docs = append(docs, &Document{
+					Index: indexName,
+					ID:    doc.Id,
+					Body:  doc,
+				})
+				expectedList = append(expectedList, doc)
+			}
+			status, err := es.CreateDocuments(docs)
+			assert.NoError(t, err)
+			assert.Equal(t, StatusCreated, status)
+
+			es.Refresh()
+
+			var list []DocBody
+			_, _, total, _ := es.Search(indexName, `{
+				"query": {
+					"match_all": {}
+				}
+			}`, &list)
+
+			require.Equal(t, docsLen, total)
+			for _, doc := range expectedList {
+				require.Contains(t, list, doc)
+			}
+		})
+
+		t.Run("refresh=true, es.Refresh()が不要であること", func(t *testing.T) {
+			indexName := faker.UUIDDigit()
+			defer es.DeleteIndeces(indexName)
+
+			var docs []*Document
+			var expectedList []DocBody
+			docsLen := rand.Intn(5) + 5
+			for range docsLen {
+				var doc DocBody
+				faker.FakeData(&doc)
+				doc.Id = faker.UUIDDigit()
+				docs = append(docs, &Document{
+					Index:   indexName,
+					ID:      doc.Id,
+					Body:    doc,
+					Refresh: RefreshTrue,
+				})
+				expectedList = append(expectedList, doc)
+			}
+			status, err := es.CreateDocuments(docs)
+			assert.NoError(t, err)
+			assert.Equal(t, StatusCreated, status)
+
+			var list []DocBody
+			_, _, total, _ := es.Search(indexName, `{
+				"query": {
+					"match_all": {}
+				}
+			}`, &list)
+
+			require.Equal(t, docsLen, total)
+			for _, doc := range expectedList {
+				require.Contains(t, list, doc)
+			}
+		})
+
+		t.Run("refresh=false", func(t *testing.T) {
+			indexName := faker.UUIDDigit()
+			defer es.DeleteIndeces(indexName)
+
+			var docs []*Document
+			var expectedList []DocBody
+			docsLen := rand.Intn(5) + 5
+			for range docsLen {
+				var doc DocBody
+				faker.FakeData(&doc)
+				doc.Id = faker.UUIDDigit()
+				docs = append(docs, &Document{
+					Index:   indexName,
+					ID:      doc.Id,
+					Body:    doc,
+					Refresh: RefreshFalse,
+				})
+				expectedList = append(expectedList, doc)
+			}
+			status, err := es.CreateDocuments(docs)
+			assert.NoError(t, err)
+			assert.Equal(t, StatusCreated, status)
+
+			es.Refresh()
+
+			var list []DocBody
+			_, _, total, _ := es.Search(indexName, `{
+				"query": {
+					"match_all": {}
+				}
+			}`, &list)
+
+			require.Equal(t, docsLen, total)
+			for _, doc := range expectedList {
+				require.Contains(t, list, doc)
+			}
+		})
+
+		t.Run("refresh=wait_for, es.Refresh()が不要であること", func(t *testing.T) {
+			indexName := faker.UUIDDigit()
+			defer es.DeleteIndeces(indexName)
+
+			var docs []*Document
+			var expectedList []DocBody
+			docsLen := rand.Intn(5) + 5
+			for range docsLen {
+				var doc DocBody
+				faker.FakeData(&doc)
+				doc.Id = faker.UUIDDigit()
+				docs = append(docs, &Document{
+					Index:   indexName,
+					ID:      doc.Id,
+					Body:    doc,
+					Refresh: RefreshWaitFor,
+				})
+				expectedList = append(expectedList, doc)
+			}
+			status, err := es.CreateDocuments(docs)
+			assert.NoError(t, err)
+			assert.Equal(t, StatusCreated, status)
+
+			var list []DocBody
+			_, _, total, _ := es.Search(indexName, `{
+				"query": {
+					"match_all": {}
+				}
+			}`, &list)
+
+			require.Equal(t, docsLen, total)
+			for _, doc := range expectedList {
+				require.Contains(t, list, doc)
+			}
+		})
+	})
+
+	t.Run("Failure", func(t *testing.T) {
+		t.Run("Index is blank", func(t *testing.T) {
+			var body DocBody
+			faker.FakeData(&body)
+			body.Id = faker.UUIDDigit()
+
+			docs := []*Document{{
+				Index: "",
+				ID:    body.Id,
+				Body:  body,
+			}}
+
+			status, err := es.CreateDocuments(docs)
+			assert.Error(t, err)
+			assert.Equal(t, StatusUnexpectedError, status)
+		})
+
+		t.Run("Body is not json", func(t *testing.T) {
+			var body DocBody
+			faker.FakeData(&body)
+			body.Id = faker.UUIDDigit()
+
+			docs := []*Document{{
+				Index: indexName,
+				ID:    body.Id,
+				Body:  1,
+			}}
+
+			status, err := es.CreateDocuments(docs)
+			assert.Error(t, err)
+			assert.Equal(t, StatusUnexpectedError, status)
+		})
+
+		t.Run("Body is nil", func(t *testing.T) {
+			var body DocBody
+			faker.FakeData(&body)
+			body.Id = faker.UUIDDigit()
+
+			docs := []*Document{{
+				Index: indexName,
+				ID:    body.Id,
+				Body:  nil,
+			}}
+
+			status, err := es.CreateDocuments(docs)
 			assert.Error(t, err)
 			assert.Equal(t, StatusInternalError, status)
 		})
