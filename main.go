@@ -74,6 +74,7 @@ type Elasticsearch interface {
 
 	CreateIndexTemplate(name, templates string) (StatusCode, error)
 	CreateDocument(doc *Document) (StatusCode, error)
+	CreateDocuments(docs []*Document) (StatusCode, error)
 	UpdateDocument(doc *Document) (StatusCode, error)
 	RemoveDocument(doc *Document) (StatusCode, error)
 
@@ -173,6 +174,85 @@ func (es *_elasticsearch) CreateDocument(doc *Document) (StatusCode, error) {
 	}
 
 	return StatusCreated, err
+}
+
+func (es *_elasticsearch) CreateDocuments(docs []*Document) (StatusCode, error) {
+	if len(docs) == 0 {
+		return StatusInternalError, errors.New("required documents")
+	}
+
+	var buf bytes.Buffer
+	for _, doc := range docs {
+		if doc.Body == nil {
+			return StatusInternalError, errors.New("one or more documents have nil body")
+		}
+
+		meta := fmt.Sprintf(`{ "index": { "_index": "%s", "_id": "%s" } }`, doc.Index, doc.ID)
+		buf.WriteString(meta + "\n")
+
+		body, err := json.Marshal(doc.Body)
+		if err != nil {
+			return StatusInternalError, err
+		}
+		buf.Write(body)
+		buf.WriteString("\n")
+	}
+
+	req := esapi.BulkRequest{
+		Body:    bytes.NewReader(buf.Bytes()),
+		Refresh: string(docs[0].Refresh),
+	}
+
+	res, err := req.Do(context.Background(), es.client)
+	if err != nil {
+		log.Printf("Error getting response: %s", err)
+		return StatusRequestError, err
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		log.Printf("[%s] Error indexing docs", res.Status())
+		switch res.StatusCode {
+		case 400:
+			return StatusBadRequestError, errors.New("bad request")
+		}
+		return StatusError, err
+	} else {
+		// Deserialize the response into a map.
+		var r map[string]interface{}
+		if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
+			log.Printf("Error parsing the response body: %s", err)
+			return StatusUnexpectedError, nil
+		}
+
+		if items, ok := r["items"].([]interface{}); ok {
+			for i, item := range items {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					for _, data := range itemMap {
+						if indexData, ok := data.(map[string]interface{}); ok {
+							if indexError, ok := indexData["error"].(map[string]interface{}); ok {
+								log.Printf("[%d] error=%s,%s; id=%s", int(indexData["status"].(float64)), indexError["type"], indexError["reason"], indexData["_id"])
+							} else {
+								log.Printf("[%d] %s; version=%d ; id=%s", int(indexData["status"].(float64)), indexData["result"], int(indexData["_version"].(float64)), indexData["_id"])
+							}
+						} else {
+							log.Printf("Item %d: Unexpected data format: %+v", i, data)
+						}
+					}
+				} else {
+					log.Printf("Item %d: Invalid format: %+v", i, item)
+				}
+			}
+		} else {
+			log.Println("No items found in response")
+		}
+
+		if errorsField, ok := r["errors"]; ok && errorsField.(bool) {
+			return StatusUnexpectedError, errors.New("operation completed with some errors")
+		}
+	}
+
+	return StatusCreated, nil
 }
 
 func (es *_elasticsearch) UpdateDocument(doc *Document) (StatusCode, error) {
