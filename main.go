@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	goElasticsearch "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
@@ -29,9 +30,12 @@ const (
 )
 
 type Config struct {
-	Address []string
-	CloudID string
-	APIKey  string
+	Address       []string
+	CloudID       string
+	APIKey        string
+	MaxRetries    int
+	RetryOnStatus []int
+	RetryBackoff  func(attempt int) time.Duration
 }
 
 // https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-refresh.html
@@ -428,9 +432,12 @@ type _elasticsearch struct {
 func connectElasticsearch(config *Config) *goElasticsearch.Client {
 
 	cfg := goElasticsearch.Config{
-		Addresses: config.Address,
-		CloudID:   config.CloudID,
-		APIKey:    config.APIKey,
+		Addresses:     config.Address,
+		CloudID:       config.CloudID,
+		APIKey:        config.APIKey,
+		MaxRetries:    config.MaxRetries,
+		RetryOnStatus: config.RetryOnStatus,
+		RetryBackoff:  config.RetryBackoff,
 	}
 	client, err := goElasticsearch.NewClient(cfg)
 
