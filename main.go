@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	goElasticsearch "github.com/elastic/go-elasticsearch/v7"
-	"github.com/elastic/go-elasticsearch/v7/esapi"
+	goElasticsearch "github.com/elastic/go-elasticsearch/v8"
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 )
 
 type StatusCode int
@@ -61,7 +61,6 @@ type documentBody struct {
 
 type HitData struct {
 	Index string        `json:"_index"`
-	Type  string        `json:"_type"`
 	Id    string        `json:"_id"`
 	Score float64       `json:"_score"`
 	Sort  []interface{} `json:"sort"`
@@ -449,13 +448,6 @@ func connectElasticsearch(config *Config) *goElasticsearch.Client {
 	return client
 }
 
-func refresh2string(r *bool) string {
-	if r != nil {
-		return map[bool]string{true: "true", false: "false"}[*r]
-	}
-	return "false"
-}
-
 func search(client *goElasticsearch.Client, index string, query string) (StatusCode, map[string]interface{}, error) {
 	var result map[string]interface{}
 	res, err := client.Search(
@@ -520,7 +512,6 @@ func parseHitsData(result map[string]interface{}, data interface{}) (StatusCode,
 
 		h := &HitData{
 			Index: hit.(map[string]interface{})["_index"].(string),
-			Type:  hit.(map[string]interface{})["_type"].(string),
 			Id:    hit.(map[string]interface{})["_id"].(string),
 		}
 
