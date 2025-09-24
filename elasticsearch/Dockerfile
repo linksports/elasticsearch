@@ -18,7 +18,7 @@ WORKDIR /home
 #     # バイナリ辞書の作成
 #     java -Dfile.encoding=UTF-8 -cp /home/sudachi-0.3.0.jar com.worksap.nlp.sudachi.dictionary.UserDictionaryBuilder -o /home/custom.dic -s /home/sudachi-dictionary-20190718/system_small.dic /home/dict.txt
 
-FROM elasticsearch:7.12.1
+FROM docker.elastic.co/elasticsearch/elasticsearch:8.19.3
 
 # 2021.03.19 現在不要機能のためコメントアウト
 # ARG sudachi_dict_type="small"

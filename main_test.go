@@ -124,6 +124,7 @@ func TestCreateDocument(t *testing.T) {
 				}
 			}`, body.Id), &list)
 
+			assert.NoError(t, err)
 			assert.Equal(t, 1, total)
 		})
 
@@ -165,6 +166,7 @@ func TestCreateDocument(t *testing.T) {
 				}
 			}`, body.Id), &list)
 
+			assert.NoError(t, err)
 			assert.Equal(t, 1, total)
 		})
 	})
