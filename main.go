@@ -314,6 +314,8 @@ func (es *_elasticsearch) RemoveDocument(doc *Document) (StatusCode, error) {
 		log.Printf("Error getting response: %s", err)
 		return StatusRequestError, err
 	}
+	defer res.Body.Close()
+
 	if res.IsError() {
 		log.Printf("[%s] Error indexing doc ID=%s", res.Status(), doc.Index)
 		switch res.StatusCode {
@@ -395,6 +397,8 @@ func (es *_elasticsearch) DeleteByQuery(indices []string, query string) (StatusC
 		log.Printf("Error getting response: %s indices=%v query=%s", err, indices, query)
 		return StatusRequestError, err
 	}
+	defer res.Body.Close()
+
 	if res.IsError() {
 		log.Printf("[%s] Error indices=%v query=%s", res.Status(), indices, query)
 		switch res.StatusCode {
@@ -417,6 +421,8 @@ func (es *_elasticsearch) DeleteIndeces(index ...string) (StatusCode, error) {
 	if err != nil {
 		return StatusError, err
 	}
+	defer res.Body.Close()
+
 	if res.IsError() {
 		return StatusUnexpectedError, errors.New(res.String())
 	}

@@ -13,11 +13,13 @@ func (es *_elasticsearch) Count(index string, query string) (StatusCode, int, er
 		es.client.Count.WithIndex(index),
 		es.client.Count.WithBody(strings.NewReader(query)),
 	)
-	defer res.Body.Close()
 	if err != nil {
 		log.Fatalf("Error getting count: %s", err)
 		return StatusRequestError, 0, err
 	}
+
+	defer res.Body.Close()
+
 	if res.IsError() {
 		err := errors.New(fmt.Sprintf("[%s] Error indexing document", res.Status()))
 
@@ -30,7 +32,7 @@ func (es *_elasticsearch) Count(index string, query string) (StatusCode, int, er
 		return StatusError, 0, err
 	}
 
-	var r map[string]interface{}
+	var r map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
 		log.Fatalf("Error parsing the response body: %s", err)
 		return StatusParseError, 0, err

@@ -8,12 +8,12 @@ import (
 
 func (es *_elasticsearch) GetSource(index string, id string, result any) (int, error) {
 	res, err := es.client.GetSource(index, id)
-	defer res.Body.Close()
-
 	if err != nil {
 		log.Fatalf("Error getting response: %s", err)
 		return res.StatusCode, err
 	}
+
+	defer res.Body.Close()
 
 	if res.StatusCode == 404 {
 		return res.StatusCode, nil
