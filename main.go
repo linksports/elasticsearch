@@ -475,12 +475,25 @@ func search(client *goElasticsearch.Client, index string, query string) (StatusC
 		if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
 			esErr = fmt.Errorf("error parsing the response body: %s", err)
 		} else {
-			//Print the response status and error information.
-			esErr = fmt.Errorf("[%s] %s: %s",
-				res.Status(),
-				e["error"].(map[string]any)["type"],
-				e["error"].(map[string]any)["reason"],
-			)
+			errorType := "unknown"
+			errorReason := "unknown"
+
+			if errData, ok := e["error"]; ok && errData != nil {
+				if errMap, ok := errData.(map[string]any); ok {
+					if t, ok := errMap["type"].(string); ok {
+						errorType = t
+					}
+					if r, ok := errMap["reason"].(string); ok {
+						errorReason = r
+					}
+				} else if errStr, ok := errData.(string); ok {
+					errorReason = errStr
+				}
+			} else {
+				errorReason = "response body does not contain error field"
+			}
+
+			esErr = fmt.Errorf("[%s] %s: %s", res.Status(), errorType, errorReason)
 		}
 		log.Println(esErr)
 
